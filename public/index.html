@@ -1,0 +1,146 @@
+<html>
+  <head>
+    <title>Map component</title>
+  </head>
+  <style>
+    /* Always set the map height explicitly to define the size of the div element that contains the map. */
+    #map {
+      height: 100%;
+    }
+
+    /* Optional: Makes the sample page fill the window. */
+    html,
+    body {
+      height: 100%;
+      margin: 0;
+      padding: 0;
+    }
+
+    a {
+      text-decoration: none;
+      color: #000;
+    }
+    input {
+      padding: 10px;
+    }
+  </style>
+  <body>
+    <div id="map"></div>
+
+    <!-- Async script executes immediately and must be after any DOM elements used in callback. -->
+    <script
+      src="https://maps.googleapis.com/maps/api/js?key=AIzaSyBPqo9xfaHPC0KHKr-tv9QAZXMf5Yp4EmE&callback=initMap&libraries=&v=weekly"
+      async
+    ></script>
+    <script>
+      let map;
+      let grid = [];
+      let address
+      let info
+      let datalist
+
+      function clearGrid() {
+        if (grid) grid.forEach(g => g.setMap(null))
+      }
+
+      function getControl() {
+        const div = document.createElement('div')
+        const input = document.createElement('input')
+        div.class = 'control'
+        div.style.margin = '50px'
+        input.id = 'control'
+        input.type = 'text'
+        input.placeholder = "e.g. ///lock.spout.radar"
+        input.index = 1
+        input.addEventListener('input', (e) => {
+          fetch(`https://api.what3words.com/v3/autosuggest?key=TSTSTSTS&input=${e.target.value}`)
+            .then(res => {
+              if (!res.ok) return null
+              return res.json()
+            })
+            .then(({ suggestions }) => {
+              datalist = document.createElement('datalist')
+              datalist.id = 'control'
+              suggestions.forEach(s => {
+                const suggestion = document.createElement('option')
+                suggestion.value = `${s.words} (${s.nearestPlace})`
+                datalist.append(suggestion)
+              })
+            })
+        })
+        div.append(input)
+        return div
+      }
+
+      function initMap() {
+        map = new google.maps.Map(document.getElementById("map"), {
+          center: { lat: 51.50516486516619, lng: -0.130601505130581 },
+          zoom: 18,
+          disableDefaultUI: true,
+        });
+        const control = getControl()
+        map.controls[google.maps.ControlPosition.TOP_LEFT].push(control)
+        map.addListener('bounds_changed', (e) => {
+          const zoom = map.getZoom()
+          if (zoom > 15) getGrid(map)
+          else clearGrid()
+        })
+        map.addListener('click', (e) => {
+          get3wa(e.latLng.toJSON(), map)
+        })
+      }
+
+      function getGrid(map) {
+        const bounds = map.getBounds().toJSON()
+        clearGrid()
+        fetch(`https://api.what3words.com/v3/grid-section?bounding-box=${bounds.south},${bounds.west},${bounds.north},${bounds.east}&key=TSTSTSTS`).then(res => {
+          if (!res.ok) return { lines: [] }
+          return res.json()
+        }).then(({ lines }) => {
+          lines.forEach(line => {
+            const lineCoords = [{ lat: line.start.lat, lng: line.start.lng }, { lat: line.end.lat, lng: line.end.lng }]
+            const gridline = new google.maps.Polyline({
+              path: lineCoords,
+              geodesic: false,
+              strokeWeight: 1,
+              strokeOpacity: 0.1,
+            })
+            gridline.addListener('click', (e) => get3wa(e.latLng.toJSON(), map))
+            gridline.setMap(map)
+            grid.push(gridline)
+          })
+        }).catch(() => {
+          // do nothing here, just catch it - generally thrown in bounding box is too large
+        })
+      }
+
+      function get3wa(coordinates, map) {
+        let visible = false
+        if (address) address.setMap(null)
+        if (info) info.setMap(null)
+        fetch(`https://api.what3words.com/v3/convert-to-3wa?coordinates=${coordinates.lat},${coordinates.lng}&key=TSTSTSTS`).then(res => res.json()).then(({ map: m, square, words, nearestPlace }) => {
+          address = new google.maps.Rectangle({ bounds: new google.maps.LatLngBounds(
+            square.southwest,
+            square.northeast,
+          ) })
+          info = new google.maps.InfoWindow({
+            content: `<a href="${m}" target="_new"><b>${words}</b></a><br><small>${nearestPlace}</small>`,
+            position: coordinates,
+          })
+          address.addListener('click', (e) => {
+            if (visible) info.close()
+            else {
+              info.setPosition(e.latLng.toJSON())
+              info.open(map)
+            }
+            visible = !visible
+          })
+          info.addListener('closeclick', () => visible = false)
+          address.setMap(map)
+          info.setMap(map)
+          visible = true
+        })
+      }
+    </script>
+  </body>
+</html>
